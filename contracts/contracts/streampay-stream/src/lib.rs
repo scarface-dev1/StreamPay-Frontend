@@ -22,6 +22,7 @@ mod error;
 mod events;
 mod fees;
 mod limits;
+mod migrate;
 mod multi;
 mod release;
 mod snapshot_diff;
@@ -1656,6 +1657,56 @@ impl Contract {
             .update_current_contract_wasm(new_wasm_hash.clone());
         events::upgraded(&env, new_wasm_hash);
         Ok(())
+    }
+
+    // ── Versioned migration ────────────────────────────────────────────────────
+
+    /// Migrates the contract's persistent storage to the latest schema
+    /// version.
+    ///
+    /// This entrypoint runs all pending migration steps sequentially to
+    /// bring the contract's storage layout up to [`migrate::LATEST_VERSION`].
+    /// If the contract is already at the latest version, the call is a
+    /// no-op (returns `Ok(())`).
+    ///
+    /// Migrations are **one-way** and **irreversible** by design: once a
+    /// contract has been migrated to version N, there is no supported path
+    /// back to version N−1.
+    ///
+    /// # Parameters
+    /// - `admin` — Must match the admin set at initialisation.
+    ///
+    /// # Errors
+    /// - [`Error::Unauthorized`] if `admin` is not the initialised admin.
+    /// - [`Error::NotFound`] if the contract has not been initialised.
+    /// - Any error returned by an individual migration step. When a step
+    ///   returns `Err`, the entire transaction is rolled back by the
+    ///   Soroban host — no partial migration is committed.
+    ///
+    /// # Auth
+    /// Requires authorisation from `admin`.
+    ///
+    /// # Pause semantics
+    /// The global pause flag does **not** block migration; an admin should
+    /// be able to migrate a paused contract.
+    pub fn migrate(env: Env, admin: Address) -> Result<(), Error> {
+        migrate::migrate_internal(&env, &admin)
+    }
+
+    /// Returns the current storage version of the contract.
+    ///
+    /// Returns `0` if no version has been recorded (pre-migration contract).
+    ///
+    /// This is a read-only view that never mutates state or requires auth.
+    /// It is unaffected by the global pause flag.
+    ///
+    /// # Returns
+    /// The current storage schema version (`u32`).
+    ///
+    /// # Errors
+    /// This entrypoint is read-only and never returns an error.
+    pub fn storage_version(env: Env) -> u32 {
+        migrate::current_version(&env)
     }
 
     // ── Admin nonce ───────────────────────────────────────────────────────────
